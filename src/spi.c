@@ -272,7 +272,11 @@ static void pllua_spi_prepare_checkparam_hook(ParseState *pstate,
 static void pllua_spi_prepare_parser_setup_hook(ParseState *pstate, void *arg)
 {
 	pllua_spi_statement *stmt = arg;
+#if PG_VERSION_NUM >= 150000
+	setup_parse_variable_parameters(pstate, &stmt->param_types, &stmt->param_types_len);
+#else
 	parse_variable_parameters(pstate, &stmt->param_types, &stmt->param_types_len);
+#endif
 }
 
 static pllua_spi_statement *pllua_spi_make_statement(lua_State *L,

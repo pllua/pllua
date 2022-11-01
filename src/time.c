@@ -920,15 +920,33 @@ pllua_time_as_table(lua_State *L)
 
 		case INTERVALOID:
 			{
+#if PG_VERSION_NUM >= 150000
+				struct pg_itm	itm = { 0 };
+#endif
 				Interval *itmp = DatumGetIntervalP(val);
 				PLLUA_TRY();
 				{
+#if PG_VERSION_NUM >= 150000
+					/* PG15 removes interval2tm, use interval2itm and copy the result to tm */
+					interval2itm(*itmp, &itm);
+					tm.tm_sec  = itm.tm_sec;
+					tm.tm_min  = itm.tm_min;
+					tm.tm_hour = itm.tm_hour;
+					tm.tm_mday = itm.tm_mday;
+					tm.tm_mon  = itm.tm_mon;
+					tm.tm_year = itm.tm_year;
+#else
 					if (interval2tm(*itmp, &tm, &fsec) != 0)
 						elog(ERROR, "interval output failed");
+#endif
 				}
 				PLLUA_CATCH_RETHROW();
 
+#if PG_VERSION_NUM >= 150000
+				microsecs = FSEC_T_SCALE(itm.tm_usec);
+#else
 				microsecs = FSEC_T_SCALE(fsec);
+#endif
 			}
 			break;
 	}
