@@ -952,6 +952,7 @@ pllua_newstate_phase1(const char *ident)
 	interp->cur_activation.interp = NULL;
 	interp->cur_activation.active_error = LUA_REFNIL;
 	interp->cur_activation.err_text = NULL;
+	interp->cur_activation.trig_spi_cxt = NULL;
 
 #if LUA_VERSION_NUM == 501
 	L = luaL_newstate();

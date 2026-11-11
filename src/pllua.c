@@ -9,6 +9,7 @@
 
 #include "commands/event_trigger.h"
 #include "commands/trigger.h"
+#include "executor/spi.h"
 
 PG_MODULE_MAGIC;
 
@@ -94,6 +95,7 @@ Datum pllua_common_call(FunctionCallInfo fcinfo, bool trusted)
 	act.interp = NULL;
 	act.active_error = LUA_REFNIL;
 	act.err_text = NULL;
+	act.trig_spi_cxt = NULL;
 
 #if PG_VERSION_NUM >= 110000
 	if (fcinfo->context && IsA(fcinfo->context, CallContext))
@@ -132,7 +134,39 @@ Datum pllua_common_call(FunctionCallInfo fcinfo, bool trusted)
 			pllua_initial_protected_call(act.interp, pllua_resume_function, &act);
 		}
 		else if (CALLED_AS_TRIGGER(fcinfo))
+		{
+#if PG_VERSION_NUM >= 100000
+			TriggerData *td = (TriggerData *) fcinfo->context;
+
+			/*
+			 * Portals that use the transition tables registered on an SPI
+			 * connection must not outlive it, and since the November 2026
+			 * minor releases SPI_finish() drops them (CVE-2026-120143).
+			 * Every other SPI call of ours has its own connection, so keep
+			 * one connection with the transition tables open for the whole
+			 * trigger call, for cursors (e.g. spi.rows()) to be opened on.
+			 * On error, the (sub)transaction abort closes it.
+			 */
+			if (td->tg_oldtable || td->tg_newtable)
+			{
+				MemoryContext oldcxt = CurrentMemoryContext;
+
+				if (SPI_connect() != SPI_OK_CONNECT)
+					elog(ERROR, "pllua: SPI_connect failed");
+				if (SPI_register_trigger_data(td) != SPI_OK_TD_REGISTER)
+					elog(ERROR, "pllua: SPI_register_trigger_data failed");
+				act.trig_spi_cxt = CurrentMemoryContext;
+				MemoryContextSwitchTo(oldcxt);
+			}
+#endif
 			pllua_initial_protected_call(act.interp, pllua_call_trigger, &act);
+			if (act.trig_spi_cxt)
+			{
+				act.trig_spi_cxt = NULL;
+				if (SPI_finish() != SPI_OK_FINISH)
+					elog(ERROR, "pllua: SPI_finish failed");
+			}
+		}
 		else if (CALLED_AS_EVENT_TRIGGER(fcinfo))
 			pllua_initial_protected_call(act.interp, pllua_call_event_trigger, &act);
 		else
@@ -174,6 +208,7 @@ Datum pllua_common_validator(FunctionCallInfo fcinfo, bool trusted)
 	act.interp = NULL;
 	act.active_error = LUA_REFNIL;
 	act.err_text = NULL;
+	act.trig_spi_cxt = NULL;
 
 	pllua_setcontext(NULL, PLLUA_CONTEXT_PG);
 
@@ -220,6 +255,7 @@ Datum pllua_common_inline(FunctionCallInfo fcinfo, bool trusted)
 	act.interp = NULL;
 	act.active_error = LUA_REFNIL;
 	act.err_text = "inline block entry";
+	act.trig_spi_cxt = NULL;
 
 #if PG_VERSION_NUM >= 110000
 	act.atomic = act.cblock->atomic;

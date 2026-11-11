@@ -778,7 +778,16 @@ static int pllua_spi_cursor_open(lua_State *L)
 
 	PLLUA_TRY();
 	{
-		bool readonly = pllua_spi_enter(L);
+		pllua_activation_record *pact = &(pllua_getinterpreter(L)->cur_activation);
+		/*
+		 * In a trigger with transition tables, use the SPI connection that
+		 * stays open for the whole call: the portal must not outlive the SPI
+		 * connection its query was planned on. See pllua_common_call().
+		 */
+		MemoryContext trig_oldcxt = pact->trig_spi_cxt ?
+			MemoryContextSwitchTo(pact->trig_spi_cxt) : NULL;
+		bool readonly = pact->trig_spi_cxt ?
+			pllua_get_cur_act_readonly(L) : pllua_spi_enter(L);
 		ParamListInfo paramLI = NULL;
 
 		if (!stmt)
@@ -808,11 +817,17 @@ static int pllua_spi_cursor_open(lua_State *L)
 		portal = SPI_cursor_open_with_paramlist(name, stmt->plan, paramLI, readonly);
 
 		/*
-		 * If we made our own statement, we didn't save it so it goes away here
-		 * The portal does _not_ go away - it's not tied to SPI.
+		 * If we made our own statement, we didn't save it so it goes away here,
+		 * or, on the trigger's SPI connection, when the trigger returns.
+		 * The portal does _not_ go away - it's not tied to SPI, unless it is
+		 * on the trigger's SPI connection, which drops it when the trigger
+		 * returns.
 		 */
 
-		pllua_spi_exit(L);
+		if (trig_oldcxt)
+			MemoryContextSwitchTo(trig_oldcxt);
+		else
+			pllua_spi_exit(L);
 	}
 	PLLUA_CATCH_RETHROW();
 

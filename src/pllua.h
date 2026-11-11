@@ -178,6 +178,14 @@ typedef struct pllua_activation_record
 	/* for error context stuff */
 	struct pllua_interpreter *interp;
 	const char *err_text;
+
+	/*
+	 * If not NULL, an SPI connection with the transition tables of the
+	 * trigger being called is open for the whole call, and this is its
+	 * procedure memory context. Cursors are opened on that connection; see
+	 * pllua_spi_cursor_open().
+	 */
+	MemoryContext trig_spi_cxt;
 } pllua_activation_record;
 
 typedef struct pllua_cache_inval
